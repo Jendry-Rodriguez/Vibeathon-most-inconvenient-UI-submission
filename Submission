@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>The Most Inconvenient UI</title>
+    <style>
+        /* Basic layout */
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f0f0f0; /* neutral light grey */
+            transition: background 0.3s ease;
+            color: #111; /* readable text */
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            position: relative;
+        }
+
+        /* fixed, non-moving lightbulb (position:fixed) */
+        .lightbulb-container {
+            position: fixed;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10000;
+            text-align: center;
+            pointer-events: none;
+        }
+        .lightbulb {
+            font-size: 60px;
+            transition: filter 0.5s ease, opacity 0.5s ease;
+            filter: drop-shadow(0 0 20px yellow);
+        }
+        .lightbulb.dim {
+            filter: none;
+            opacity: 0.5;
+        }
+        .lightbulb-timer {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+            pointer-events: none;
+        }
+
+        /* Full-screen breathing overlay (interrupts everything) */
+        #breath-overlay {
+            display: none; /* toggled visible when active */
+            position: fixed;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.9);
+            color: #fff;
+            z-index: 200000; /* very high so it captures everything */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 24px;
+            text-align: center;
+            padding: 20px;
+        }
+        #breath-overlay.active { display: flex; }
+        #breath-prompt { font-size: 48px; font-weight: 700; }
+        #breath-instruction { font-size: 18px; color: #ddd; }
+        #breath-input {
+            font-size: 22px;
+            padding: 12px;
+            width: min(640px, 90%);
+            border-radius: 8px;
+            border: none;
+            outline: none;
+            text-align: center;
+        }
+
+        /* Buttons styling: dimmable but readable */
+        .buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin: 30px 0;
+            transition: gap 0.5s ease;
+        }
+        button, .link-button {
+            padding: 20px;
+            font-size: 18px;
+            border: 2px solid rgba(0,0,0,0.08);
+            background: #6c757d; /* dimmed neutral color */
+            color: #ffffff; /* readable text */
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            position: relative;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        button:hover, .link-button:hover { transform: translateY(-2px); }
+        button:disabled {
+            background: #bdbdbd;
+            border-color: #bdbdbd;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        /* CAPTCHA area */
+        .captcha-container {
+            display: none;
+            background: #fff3cd;
+            padding: 20px;
+            border-radius: 5px;
+            border: 2px solid #ffc107;
+            margin: 20px 0;
+            transition: transform 0.5s ease;
+            color: #111;
+        }
+        .captcha-container.active { display:block; }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            font-size: 16px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            color: #111;
+            background: #ffffff;
+        }
+
+        .submit-buttons-container { display:flex; gap:10px; margin-top:10px; }
+        .submit-btn { background:#28a745; color:#fff; border:none; padding:10px; border-radius:6px; cursor:pointer; }
+        .fake-submit-btn { background:#218838; color:#fff; border:none; padding:10px; border-radius:6px; cursor:pointer; }
+
+        .message { padding:15px; margin:15px 0; border-radius:5px; display:none; color:#111; }
+        .message.show { display:block; }
+        .success { background:#d4edda; color:#155724; border:1px solid #c3e6cb; }
+        .error   { background:#f8d7da; color:#721c24; border:1px solid #f5c6cb; }
+
+        .counter { text-align:center; font-size:20px; font-weight:bold; color:#007bff; margin:20px 0; }
+        .timer   { text-align:center; font-size:16px; color:#dc3545; margin:10px 0; font-weight:bold; }
+
+        /* dimmed page state */
+        body.dimmed { background:#e0e0e0; }
+        body.dimmed .container { background:#f7f7f7; }
+        body.dimmed button, body.dimmed .link-button { opacity:0.8; filter:grayscale(0.6) saturate(0.6); }
+
+        @media (max-width:520px) { .buttons { grid-template-columns:1fr; } .lightbulb { font-size:46px; } }
+    </style>
+</head>
+<body>
+    <!-- fixed bulb / timer (will not move or follow mouse) -->
+    <div class="lightbulb-container" aria-hidden="true">
+        <div class="lightbulb" id="lightbulb">💡</div>
+        <div class="lightbulb-timer" id="lightbulb-timer">Light remaining: 2:00</div>
+    </div>
+
+    <!-- FULL-SCREEN breathing overlay (interrupts everything) -->
+    <div id="breath-overlay" aria-hidden="true" role="dialog" aria-modal="true">
+        <div id="breath-prompt">Breathe in</div>
+        <div id="breath-instruction">Type the phrase exactly, then press Enter. Complete the sequence three times.</div>
+        <input id="breath-input" type="text" autocomplete="off" placeholder="Type the phrase, then press Enter" />
+        <div id="breath-hint" style="font-size:14px;color:#bbb">Progress: <span id="breath-progress">0/3 cycles</span></div>
+    </div>
+
+    <div class="container" id="main-container">
+        <h1 id="title">🎯 The Most Inconvenient UI Ever</h1>
+        <p style="text-align:center;color:#666">Just click a button... if you dare!</p>
+
+        <div class="counter" id="counter-div">CAPTCHAs Completed: <span id="counter">0</span> / ?</div>
+        <div class="timer" id="timer">Time Remaining: 31s</div>
+
+        <div class="buttons" id="button-container">
+            <!-- Home now links to an image that reads "HOME" (opens in new tab) -->
+            <a class="link-button" id="home-link" href="https://via.placeholder.com/600x200.png?text=HOME" target="_blank" rel="noopener noreferrer">🏠 Home</a>
+            <button onclick="startCaptcha('outlook')" data-position="1">📧 Outlook</button>
+            <button onclick="startCaptcha('email')" data-position="2">✉️ Email</button>
+            <button onclick="startCaptcha('youtube')" data-position="3">▶️ YouTube</button>
+        </div>
+
+        <div id="message" class="message"></div>
+
+        <div class="loading-bar" id="loading-bar" style="display:none">
+            <div class="loading-progress" id="loading-progress" style="width:0%"></div>
+        </div>
+        <div class="loading-text" id="loading-text"></div>
+
+        <div id="captcha" class="captcha-container" aria-hidden="true">
+            <div class="captcha-question" id="captcha-question"></div>
+            <input type="text" id="captcha-input" placeholder="Enter your answer here...">
+            <div class="submit-buttons-container" id="submit-buttons-container">
+                <button class="submit-btn" id="submit-btn-real" onclick="attemptSubmit()">Submit Answer</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /************
+         * STATE
+         ************/
+        let captchaCount = 0;
+        let targetLink = '';
+        let currentCaptcha = null;
+        let waitStartTime = null;
+        let usedCaptchas = [];
+        let timerInterval = null;
+        let timeRemaining = 31;
+        let eventCheckInterval = null;
+        let lastEventTime = 0;
+        let eventCooldown = 5000;
+        let inBreak = false;
+        let pendingAnswer = '';
+        let clickCount = 0;
+        let requiredClicks = 1;
+        let lastClickTime = 0;
+        let inputClearInterval = null;
+        let focusStealInterval = null;
+        let lightbulbTimer = 120;
+        let lightbulbInterval = null;
+
+        // BREATH overlay state
+        const BREATH_CYCLES_REQUIRED = 3; // user must complete 3 cycles
+        const BREATH_STEP_SEQUENCE = ['Breathe in','Breathe out!']; // one cycle = both steps
+        let breathCycle = 0;
+        let breathStepIndex = 0; // 0..(BREATH_STEP_SEQUENCE.length-1)
+        const breathOverlay = document.getElementById('breath-overlay');
+        const breathInput = document.getElementById('breath-input');
+        const breathPrompt = document.getElementById('breath-prompt');
+        const breathProgress = document.getElementById('breath-progress');
+
+        /************
+         * CAPTCHAS
+         ************/
+        const captchas = [
+            { question: "What is the tenth digit of pi?", answer: "5" },
+            { question: "Type this exactly: Th3_Qu!ck_F0x", answer: "Th3_Qu!ck_F0x" },
+            { question: "Please wait exactly 8 seconds, then type the word: VERIFIED", answer: "VERIFIED", waitTime: 8000 },
+            { question: "Wait 10 seconds before responding. Then type: CONFIRMED", answer: "CONFIRMED", waitTime: 10000 },
+            { question: "Reverse this string: racecar123testing", answer: "gnitset321racecar" },
+            { question: "What is the square root of 676?", answer: "26" },
+            { question: "Convert binary 11001 to decimal:", answer: "25" },
+            { question: "Type the character that has ASCII value 42:", answer: "*" }
+            // ... (shortened for brevity; you can paste the full list back in)
+        ];
+
+        const links = {
+            home: "https://via.placeholder.com/600x200.png?text=HOME",
+            outlook: "https://outlook.office.com",
+            email: "https://mail.google.com",
+            youtube: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        };
+
+        /************
+         * LIGHTBULB (fixed)
+         ************/
+        window.addEventListener('load', () => {
+            startLightbulbTimer();
+        });
+
+        function startLightbulbTimer(){
+            if (lightbulbInterval) clearInterval(lightbulbInterval);
+            lightbulbInterval = setInterval(() => {
+                lightbulbTimer--;
+                const minutes = Math.floor(lightbulbTimer / 60);
+                const seconds = lightbulbTimer % 60;
+                const timerEl = document.getElementById('lightbulb-timer');
+                if (timerEl) timerEl.textContent = `Light remaining: ${minutes}:${seconds.toString().padStart(2,'0')}`;
+                if (lightbulbTimer <= 0){
+                    clearInterval(lightbulbInterval);
+                    breakLightbulb();
+                }
+            }, 1000);
+        }
+
+        function breakLightbulb(){
+            const lightbulb = document.getElementById('lightbulb');
+            const timerEl = document.getElementById('lightbulb-timer');
+            if (lightbulb) lightbulb.classList.add('dim'); // dim only; do not change emoji
+            if (timerEl) { timerEl.textContent = 'The light has gone out...'; timerEl.style.color = '#8a1f1f'; }
+            document.body.classList.add('dimmed');
+            // remove any mousemove listeners that might move stuff (defensive)
+            try { document.removeEventListener('mousemove', updateFlashlight); } catch(e){}
+        }
+
+        function updateFlashlight(){ /* intentionally empty: no mouse-follow behavior */ }
+
+        /************
+         * BREATH OVERLAY (full-screen interrupt)
+         ************/
+        function showBreathOverlay(){
+            // Pause timers & events
+            inBreak = true;
+            clearInterval(timerInterval);
+            if (eventCheckInterval) { clearInterval(eventCheckInterval); eventCheckInterval = null; }
+
+            // Block interactions on main container (pointer-events none) and show overlay
+            const main = document.getElementById('main-container');
+            if (main) main.style.pointerEvents = 'none';
+            breathOverlay.classList.add('active');
+            breathOverlay.setAttribute('aria-hidden','false');
+            breathInput.value = '';
+            breathInput.focus();
+
+            // initialize progress/state
+            breathCycle = 0;
+            breathStepIndex = 0;
+            breathPrompt.textContent = BREATH_STEP_SEQUENCE[breathStepIndex];
+            breathProgress.textContent = `${breathCycle}/${BREATH_CYCLES_REQUIRED} cycles`;
+        }
+
+        function hideBreathOverlay(){
+            breathOverlay.classList.remove('active');
+            breathOverlay.setAttribute('aria-hidden','true');
+            const main = document.getElementById('main-container');
+            if (main) main.style.pointerEvents = '';
+            inBreak = false;
+            // resume timers and event checks
+            startTimer();
+            startEventChecks();
+        }
+
+        // When user types the correct phrase and presses Enter, advance the sequence.
+        if (breathInput) {
+            breathInput.addEventListener('keypress', function(e){
+                if (e.key !== 'Enter') return;
+                const val = this.value.trim();
+                const expected = BREATH_STEP_SEQUENCE[breathStepIndex];
+                if (val === expected){
+                    // advance step
+                    breathStepIndex++;
+                    if (breathStepIndex >= BREATH_STEP_SEQUENCE.length){
+                        breathStepIndex = 0;
+                        breathCycle++;
+                    }
+                    // update prompt/progress
+                    if (breathCycle >= BREATH_CYCLES_REQUIRED){
+                        breathProgress.textContent = `${breathCycle}/${BREATH_CYCLES_REQUIRED} cycles`;
+                        // completed required cycles -> hide overlay and resume
+                        hideBreathOverlay();
+                    } else {
+                        breathPrompt.textContent = BREATH_STEP_SEQUENCE[breathStepIndex];
+                        breathProgress.textContent = `${breathCycle}/${BREATH_CYCLES_REQUIRED} cycles`;
+                        this.value = '';
+                    }
+                } else {
+                    // wrong input: clear and hint
+                    this.value = '';
+                    this.placeholder = 'Wrong. Try again exactly.';
+                    setTimeout(()=> { this.placeholder = 'Type the phrase, then press Enter'; }, 1000);
+                }
+            });
+        }
+
+        /************
+         * EVENTS: triggerBreak used by random event checks
+         ************/
+        function triggerBreak(){
+            // show full-screen breath overlay that blocks the entire page until user completes 3 cycles
+            showBreathOverlay();
+        }
+
+        /************
+         * CAPTCHAs: core behavior (trimmed list above)
+         ************/
+        function showLoadingBar(){
+            const loadingBar = document.getElementById('loading-bar');
+            const loadingProgress = document.getElementById('loading-progress');
+            const loadingText = document.getElementById('loading-text');
+            if (!loadingBar || !loadingProgress || !loadingText) return Promise.resolve();
+            loadingBar.style.display = 'block';
+            loadingProgress.style.width = '0%';
+            loadingText.textContent = 'Verifying...';
+            const duration = Math.floor(Math.random()*3000)+3000;
+            setTimeout(()=> loadingProgress.style.width = '100%', 10);
+            return new Promise(resolve => {
+                setTimeout(() => { loadingBar.style.display='none'; loadingProgress.style.width='0%'; loadingText.textContent=''; resolve(); }, duration);
+            });
+        }
+
+        function startCaptcha(link){
+            // If break overlay is active, do not start a new captcha now
+            if (breathOverlay.classList.contains('active')) return;
+
+            // If they've completed enough, open link
+            if (captchaCount >= 10) {
+                window.open(links[link], '_blank');
+                showMessage("success", "🎉 Success! Opening link...");
+                return;
+            }
+
+            // sometimes show loading
+            if (Math.random() < 0.4) {
+                showLoadingBar().then(()=> beginCaptcha(link));
+            } else {
+                beginCaptcha(link);
+            }
+        }
+
+        function beginCaptcha(link) {
+            targetLink = link;
+            let available = captchas.filter((_,i)=> !usedCaptchas.includes(i));
+            if (available.length === 0){ usedCaptchas = []; available = captchas; }
+            const randIndex = Math.floor(Math.random()*available.length);
+            const captchaIndex = captchas.indexOf(available[randIndex]);
+            usedCaptchas.push(captchaIndex);
+            currentCaptcha = captchas[captchaIndex];
+
+            const captchaEl = document.getElementById('captcha');
+            const captchaQuestion = document.getElementById('captcha-question');
+            const captchaInput = document.getElementById('captcha-input');
+
+            if (captchaEl) captchaEl.classList.add('active');
+            if (captchaQuestion) captchaQuestion.innerHTML = currentCaptcha.question;
+            if (captchaInput) { captchaInput.value=''; captchaInput.focus(); }
+
+            setupMultipleSubmitButtons();
+            applyRandomFonts();
+            startTimer();
+            startEventChecks();
+            startInputClearInterval();
+            startFocusStealInterval();
+
+            if (currentCaptcha.hideAfter){
+                setTimeout(() => {
+                    const q = document.getElementById('captcha-question'); if (q) q.innerHTML = "What was the sequence?";
+                }, currentCaptcha.hideAfter);
+            }
+            if (currentCaptcha.waitTime) waitStartTime = Date.now(); else waitStartTime = null;
+        }
+
+        function setupMultipleSubmitButtons(){
+            const container = document.getElementById('submit-buttons-container');
+            if (!container) return;
+            container.innerHTML = '';
+            const numButtons = Math.floor(Math.random()*3)+1;
+            if (numButtons === 1){
+                const btn = document.createElement('button'); btn.className='submit-btn'; btn.textContent='Submit Answer'; btn.onclick=attemptSubmit; container.appendChild(btn);
+            } else {
+                const correctIndex = Math.floor(Math.random()*numButtons);
+                const labels = ['Submit Answer','Send Reply','Confirm'];
+                for (let i=0;i<numButtons;i++){
+                    const btn = document.createElement('button');
+                    btn.className = i===correctIndex ? 'submit-btn' : 'fake-submit-btn';
+                    btn.textContent = labels[i%labels.length];
+                    if (i===correctIndex) btn.onclick=attemptSubmit;
+                    else btn.onclick = ()=> showMessage("error","❌ Wrong button! Try another one.");
+                    container.appendChild(btn);
+                }
+            }
+            requiredClicks = Math.random() < 0.3 ? 2 : 1;
+            clickCount = 0;
+        }
+
+        function attemptSubmit(){
+            if (requiredClicks === 2){
+                const now = Date.now();
+                if (now - lastClickTime > 500){ clickCount = 1; lastClickTime = now; return; } else { clickCount++; }
+                if (clickCount < requiredClicks){ lastClickTime = now; return; }
+            }
+            clickCount = 0; lastClickTime = 0;
+            if (Math.random() < 0.333){
+                const captchaInput = document.getElementById('captcha-input');
+                if (captchaInput) pendingAnswer = captchaInput.value;
+                // simple confirm via native confirm dialog to avoid extra markup for now
+                const ok = confirm("Are you sure you want to submit?");
+                if (ok) checkCaptcha(); else showMessage("error","Submission cancelled!");
+            } else {
+                checkCaptcha();
+            }
+        }
+
+        function checkCaptcha(){
+            const captchaInput = document.getElementById('captcha-input');
+            const userAnswer = pendingAnswer || (captchaInput ? captchaInput.value : '');
+            pendingAnswer = '';
+
+            clearInterval(timerInterval);
+            clearInterval(inputClearInterval);
+            clearInterval(focusStealInterval);
+
+            if (currentCaptcha && currentCaptcha.waitTime && waitStartTime){
+                const elapsed = Date.now() - waitStartTime;
+                if (elapsed < currentCaptcha.waitTime){
+                    showMessage("error","❌ Error: You didn't wait long enough! Try again.");
+                    disableSubmitButton(2000);
+                    setTimeout(()=> startCaptcha(targetLink), 2000);
+                    return;
+                }
+            }
+
+            if (currentCaptcha && userAnswer === currentCaptcha.answer){
+                captchaCount++;
+                const counterEl = document.getElementById('counter');
+                if (counterEl) counterEl.textContent = captchaCount;
+                const container = document.getElementById('button-container');
+                if (container) container.style.gap = (15 + (captchaCount*10)) + 'px';
+
+                if (Math.random() < 0.2){
+                    const numShuffles = Math.floor(Math.random()*3)+2;
+                    for (let i=0;i<numShuffles;i++) setTimeout(()=> shuffleButtons(), i*300);
+                }
+
+                if (captchaCount >= 10){
+                    if (eventCheckInterval) { clearInterval(eventCheckInterval); eventCheckInterval = null; }
+                    showMessage("success","🎊 Congratulations! You completed all 10 CAPTCHAs! You may now click your button.");
+                    const captchaEl = document.getElementById('captcha'); if (captchaEl) captchaEl.classList.remove('active');
+                } else {
+                    showMessage("success", `✅ Correct! But wait... we need to verify that CAPTCHA. Complete another one! (${captchaCount}/?)`);
+                    setTimeout(()=> startCaptcha(targetLink), 2500);
+                }
+            } else {
+                showMessage("error","❌ Error: Incorrect answer! That CAPTCHA doesn't count. Try again.");
+                disableSubmitButton(3000);
+                setTimeout(()=> startCaptcha(targetLink), 2500);
+            }
+        }
+
+        function showMessage(type, text){
+            const msg = document.getElementById('message'); if (!msg) return;
+            msg.className = `message ${type} show`; msg.textContent = text;
+            setTimeout(()=> { if (msg) msg.classList.remove('show'); }, 2000);
+        }
+
+        /************
+         * TIMER & EVENTS
+         ************/
+        function startTimer(){
+            clearInterval(timerInterval);
+            timeRemaining = 31;
+            const timerEl = document.getElementById('timer');
+            if (timerEl) timerEl.textContent = `Time Remaining: ${timeRemaining}s`;
+            timerInterval = setInterval(()=>{
+                timeRemaining--;
+                const timerEl2 = document.getElementById('timer');
+                if (timerEl2) timerEl2.textContent = `Time Remaining: ${timeRemaining}s`;
+                if (timeRemaining <= 0){
+                    clearInterval(timerInterval);
+                    showMessage("error","⏰ Time's up! CAPTCHA failed.");
+                    setTimeout(()=> startCaptcha(targetLink), 2000);
+                }
+            },1000);
+        }
+
+        function startEventChecks(){
+            if (eventCheckInterval) return;
+            eventCheckInterval = setInterval(()=>{
+                if (inBreak) return;
+                const now = Date.now();
+                if (now - lastEventTime < eventCooldown) return;
+                if (Math.random() < 0.01){ triggerBreak(); return; } // 1% chance trigger full-screen break
+                if (Math.random() < 0.02){ moveRandomElement(); lastEventTime = now; } // 2% movement
+            },1000);
+        }
+
+        function moveRandomElement(){
+            const buttons = document.querySelectorAll('#button-container button, #button-container .link-button');
+            const submitButtons = document.querySelectorAll('#submit-buttons-container button');
+            const movable = [...Array.from(buttons), ...Array.from(submitButtons)];
+            if (movable.length === 0) return;
+            const el = movable[Math.floor(Math.random()*movable.length)];
+            const dir = Math.random() < 0.5 ? -210 : 210;
+            el.style.transform = `translateY(${dir}px)`;
+            setTimeout(()=> { if (el) el.style.transform = ''; }, 500);
+        }
+
+        function startInputClearInterval(){
+            clearInterval(inputClearInterval);
+            inputClearInterval = setInterval(()=>{
+                if (Math.random() < 0.05){
+                    const input = document.getElementById('captcha-input');
+                    if (input && input.value.length > 3) { input.value = ''; showMessage("error","Oops! Input cleared. Please try again."); }
+                }
+            },2000);
+        }
+
+        function startFocusStealInterval(){
+            clearInterval(focusStealInterval);
+            focusStealInterval = setInterval(()=>{
+                if (Math.random() < 0.03){
+                    const input = document.getElementById('captcha-input');
+                    if (input && document.activeElement === input) input.blur();
+                }
+            },3000);
+        }
+
+        function disableSubmitButton(duration){
+            const buttons = document.querySelectorAll('#submit-buttons-container button');
+            buttons.forEach(b=> b.disabled = true);
+            setTimeout(()=> buttons.forEach(b=> b.disabled = false), duration);
+        }
+
+        function shuffleButtons(){
+            const container = document.getElementById('button-container'); if (!container) return;
+            const buttons = Array.from(container.children);
+            for (let i = buttons.length-1; i>0; i--){
+                const j = Math.floor(Math.random()*(i+1));
+                container.appendChild(buttons[j]);
+            }
+        }
+
+        // Enter key on captcha input triggers first submit button if present
+        const captchaInputEl = document.getElementById('captcha-input');
+        if (captchaInputEl) {
+            captchaInputEl.addEventListener('keypress', function(e){
+                if (e.key === 'Enter'){
+                    const buttons = document.querySelectorAll('#submit-buttons-container button.submit-btn');
+                    if (buttons.length > 0) buttons[0].click();
+                }
+            });
+        }
+
+        // defensive: no mousemove effects that move the bulb or timer
+        try { document.removeEventListener('mousemove', updateFlashlight); } catch(e){}
+
+        // initial start (do not auto-start CAPTCHAs)
+        // timers and event checks are started when a CAPTCHA begins (via startCaptcha)
+    </script>
+</body>
+</html>
